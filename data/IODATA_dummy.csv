@@ -1,0 +1,7 @@
+﻿IO,agriculture,manufacturing,construction,transport,services,energy
+agriculture,20,10,5,3,5,2
+manufacturing,8,25,10,5,7,4
+construction,5,15,20,6,4,3
+transport,4,6,5,10,6,2
+services,7,8,4,5,20,3
+energy,2,3,3,2,4,10

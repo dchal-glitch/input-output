@@ -1,0 +1,7 @@
+﻿IO,final_consumption,final_exports,capital_formation
+agriculture,40,10,5
+manufacturing,30,20,15
+construction,10,5,20
+transport,15,8,6
+services,25,15,10
+energy,5,3,2
