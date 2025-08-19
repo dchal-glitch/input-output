@@ -1,3 +1,4 @@
+import random
 from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
@@ -48,7 +49,7 @@ class IOService:
         matrix_service = await self.get_matrix_service()
         return await matrix_service.get_intermediate_consumption_matrix()
 
-    async def get_fd_table(self,with_total_final_use=False,change_data =[], only_total_final_use=False):
+    async def get_fd_table(self,with_total_final_use=False,change_data =[],only_total_final_use=False):
         """Get the final demand table data"""
         matrix_service = await self.get_matrix_service()
         fd_matrix = await matrix_service.get_final_demand_matrix()
@@ -65,17 +66,23 @@ class IOService:
                     if sector in fd_matrix.index and demand in fd_matrix.columns:
                         fd_matrix.at[sector, demand] = value
                         logger.info(f"Updated FD matrix at ({sector}, {demand}) to {value}")
-
-        if with_total_final_use:
-            total_final_use = await self.get_total_final_use(change_data)
-            if is_total_final_use_change:
+            else:
+                #Randomly apply the change in total_final_use across sector
+                self.actual_total_final_use = await self.get_total_final_use()
                 for change_conf in change_data:
                     sector = change_conf.get("sector")
-                    demand = TOTAL_FINAL_USE_COLUMN
-                    value = change_conf.get("value")
-                    if sector in total_final_use.index:
-                        total_final_use.at[sector] = value
-                        logger.info(f"Updated FD matrix at ({sector}, {demand}) to {value}")
+                    actual_sector_total_final_use = self.actual_total_final_use.get(sector, 0)
+                    new_total_final_use = change_conf.get("value")
+                    change_final_use = new_total_final_use - actual_sector_total_final_use
+                    for column in fd_matrix.columns:
+                        if column == fd_matrix.columns[-1]:
+                            fd_matrix.at[sector,column]+=change_final_use
+                            break
+                        rand_value = random.randrange(change_final_use)
+                        fd_matrix.at[sector,column]+=rand_value
+                        change_final_use -= rand_value
+        if with_total_final_use:
+            total_final_use = await self.get_total_final_use(change_data)
             if only_total_final_use:
                 fd_matrix =  total_final_use
             else:
@@ -86,7 +93,10 @@ class IOService:
         """Get the total final use"""
         matrix_service = await self.get_matrix_service()
         io_matrix = await matrix_service.get_io_matrix()
+        is_total_final_use_change = False
         if change_data:
+            is_total_final_use_change = change_data[0].get("demand") == TOTAL_FINAL_USE_COLUMN
+        if change_data and not is_total_final_use_change:
             logger.info(f"Applying changes to IO matrix for total final use: {change_data}")
             for change_conf in change_data:
                 sector = change_conf.get("sector")
@@ -95,7 +105,16 @@ class IOService:
                 if sector in io_matrix.index and demand in io_matrix.columns:
                     io_matrix.at[sector, demand] = value
                     logger.info(f"Updated IO matrix at ({sector}, {demand}) to {value}")
+
         total_final_use = io_matrix.sum(axis=1).rename("total_final_use")
+
+        if is_total_final_use_change:
+            for change_conf in change_data:
+                sector = change_conf.get("sector")
+                value = change_conf.get("value")
+                if sector in io_matrix.index:
+                    total_final_use.at[sector] = value
+        
 
         return total_final_use
     
@@ -118,14 +137,21 @@ class IOService:
             # Calculate output using technical coefficients and Leontief inverse
 
             changed_fd_matrix = await self.get_fd_table(change_data=change_sector_values)
-            changed_fd_matrix_with_total_final_use = await self.get_fd_table(change_data=change_sector_values, with_total_final_use=True,only_total_final_use=False)
+            # changed_fd_matrix_with_total_final_use = await self.get_fd_table(change_data=change_sector_values, with_total_final_use=True)
 
             fd_change_type = await self.check_change_fd_type(change_sector_values)
             if fd_change_type == "total_final_use_change":
-                changed_total_final_use = await self.get_fd_table(change_data=change_sector_values, with_total_final_use=True,only_total_final_use=True)
+                changed_total_final_use = await self.get_total_final_use(change_data=change_sector_values)
                 changed_total_final_use = changed_total_final_use.to_frame(TOTAL_FINAL_USE_COLUMN)
-                output = await matrix_service.calculate_output_with_new_fd(use_total_final_use=True,new_total_final_use=changed_total_final_use)
+                actual_fd_matrix = await self.get_fd_table()
+                changed_fd_matrix_with_total_final_use = pd.concat([actual_fd_matrix, changed_total_final_use], axis=1)
+                
+                # changed_total_final_use = changed_total_final_use.to_frame(TOTAL_FINAL_USE_COLUMN)
+                # output = await matrix_service.calculate_output_with_new_fd(use_total_final_use=True,new_total_final_use=changed_total_final_use)
+                output = await matrix_service.calculate_output_with_new_fd(use_fd=True,new_final_demand=changed_fd_matrix)
+                output = output.sum(axis=1).to_frame(TOTAL_FINAL_USE_COLUMN)
             else:
+                changed_fd_matrix_with_total_final_use = await self.get_fd_table(change_data=change_sector_values, with_total_final_use=True)
                 output = await matrix_service.calculate_output_with_new_fd(use_fd=True,new_final_demand=changed_fd_matrix)
 
             new_ic_matrix = tech_coeffs.multiply(output.sum(axis=1), axis=0)
