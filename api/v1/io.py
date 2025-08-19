@@ -15,6 +15,7 @@ from services.io_service import IOService
 from services.matrix_service import MatrixService
 from core.auth import get_current_user, get_current_user_optional
 from services.table_service import TableService
+from validators import validate_sector_changes, validate_matrix_data_compatibility, ValidationError
 
 router = APIRouter(prefix="/io", tags=["input-output"])
 
@@ -45,7 +46,7 @@ async def get_io_table():
         }
 
         table_service = TableService()
-        flattened_table = table_service.flatten_matrix(io_table,sector_mapping,demand_mapping,final_demand_groups,is_io_table=True)
+        flattened_table = table_service.flatten_matrix("Input Output", io_table, sector_mapping, demand_mapping, final_demand_groups, is_io_table=True)
         tables = []
         tables.append(flattened_table)
         return {
@@ -116,6 +117,10 @@ async def policy_dashboard(request_data: PolicyDashboardRequest):
     }
     """
     try:
+        # Validate the request data
+        if request_data.change_sector_values:
+            validate_sector_changes(request_data.change_sector_values)
+        
         sector_mapping = {
             "agriculture": "Agriculture",
             "manufacturing": "Manufacturing",
@@ -161,21 +166,29 @@ async def policy_dashboard(request_data: PolicyDashboardRequest):
         tables = []
         if not change_sector_values:
             fd_table = await io_service.get_fd_table(with_total_final_use=True)
-            flattened_fd_table = table_service.flatten_matrix(fd_table, sector_mapping, demand_mapping, final_demand_groups, is_editable=True)
+            flattened_fd_table = table_service.flatten_matrix("Final Demand", fd_table, sector_mapping, demand_mapping, final_demand_groups, is_editable=True)
             tables.append(flattened_fd_table)
         else:
             output_data = await io_service.calculate_output(change_sector_values)
             changed_fd_matrix_with_total_final_use = output_data.get("changed_fd_matrix_with_total_final_use", [])
             new_ic_matrix = output_data.get("new_ic_matrix", [])
-            flattened_fd_table = table_service.flatten_matrix(changed_fd_matrix_with_total_final_use, sector_mapping, demand_mapping, final_demand_groups, is_editable=True)
+            new_output = output_data.get("new_output", [])
+            flattened_fd_table = table_service.flatten_matrix("Final Demand", changed_fd_matrix_with_total_final_use, sector_mapping, demand_mapping, final_demand_groups, is_editable=True)
             tables.append(flattened_fd_table)
-            flattened_ic_table = table_service.flatten_matrix(new_ic_matrix, sector_mapping, demand_mapping, final_demand_groups, is_io_table=True)
+            flattened_new_output_table = table_service.flatten_matrix("Direct Impact",new_output, sector_mapping, demand_mapping, final_demand_groups, is_editable=False)
+            tables.append(flattened_new_output_table)
+            flattened_ic_table = table_service.flatten_matrix("Indirect Impact", new_ic_matrix, sector_mapping, demand_mapping, final_demand_groups, is_io_table=True)
             tables.append(flattened_ic_table)
         return {
             "data": tables,
             "message": "Output calculations completed successfully",
             "success": True
         }
+    except ValidationError as ve:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Validation error: {ve.message}"
+        )
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to calculate output: {str(e)}")
 
@@ -190,8 +203,17 @@ async def create_io_matrix(
     Requires authentication
     """
     try:
+        # Validate matrix data compatibility
+        validate_matrix_data_compatibility(matrix_data.intermediate_consumption_data)
+        validate_matrix_data_compatibility(matrix_data.final_demand_data)
+        
         matrix = IOService.create_io_matrix(db=db, matrix_data=matrix_data)
         return matrix
+    except ValidationError as ve:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Validation error: {ve.message}"
+        )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
@@ -403,37 +425,60 @@ async def get_final_demand_data(
 
 
 @router.post("/validate-matrix")
-async def validate_matrix_data(
+async def validate_matrix_data_endpoint(
     matrix_data: Dict[str, List[List[float]]],
     current_user: Optional[Dict[str, Any]] = Depends(get_current_user_optional)
 ):
     """
-    Validate matrix data format and compatibility
+    Validate matrix data format and compatibility using the new validation system
     """
-    intermediate = matrix_data.get("intermediate_consumption_data", [])
-    final_demand = matrix_data.get("final_demand_data", [])
-    
-    validation_result = {
-        "intermediate_consumption_valid": MatrixService.validate_matrix_data(intermediate),
-        "final_demand_valid": MatrixService.validate_matrix_data(final_demand),
-        "dimensions_compatible": False,
-        "intermediate_shape": [0, 0],
-        "final_demand_shape": [0, 0]
-    }
-    
-    if intermediate:
-        validation_result["intermediate_shape"] = [len(intermediate), len(intermediate[0])]
-    
-    if final_demand:
-        validation_result["final_demand_shape"] = [len(final_demand), len(final_demand[0])]
-    
-    # Check dimension compatibility
-    if (validation_result["intermediate_consumption_valid"] and 
-        validation_result["final_demand_valid"] and
-        validation_result["intermediate_shape"][0] == validation_result["final_demand_shape"][0]):
-        validation_result["dimensions_compatible"] = True
-    
-    return validation_result
+    try:
+        intermediate = matrix_data.get("intermediate_consumption_data", [])
+        final_demand = matrix_data.get("final_demand_data", [])
+        
+        validation_result = {
+            "intermediate_consumption_valid": False,
+            "final_demand_valid": False,
+            "dimensions_compatible": False,
+            "intermediate_shape": [0, 0],
+            "final_demand_shape": [0, 0],
+            "validation_errors": []
+        }
+        
+        # Validate intermediate consumption data
+        try:
+            if intermediate:
+                validate_matrix_data_compatibility(intermediate)
+                validation_result["intermediate_consumption_valid"] = True
+                validation_result["intermediate_shape"] = [len(intermediate), len(intermediate[0])]
+        except ValidationError as e:
+            validation_result["validation_errors"].append(f"IC Matrix: {e.message}")
+        
+        # Validate final demand data
+        try:
+            if final_demand:
+                validate_matrix_data_compatibility(final_demand)
+                validation_result["final_demand_valid"] = True
+                validation_result["final_demand_shape"] = [len(final_demand), len(final_demand[0])]
+        except ValidationError as e:
+            validation_result["validation_errors"].append(f"FD Matrix: {e.message}")
+        
+        # Check dimension compatibility
+        try:
+            if intermediate and final_demand and validation_result["intermediate_consumption_valid"] and validation_result["final_demand_valid"]:
+                from validators import validate_matrix_dimensions
+                validate_matrix_dimensions(intermediate, final_demand)
+                validation_result["dimensions_compatible"] = True
+        except ValidationError as e:
+            validation_result["validation_errors"].append(f"Dimension compatibility: {e.message}")
+        
+        return validation_result
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Validation failed: {str(e)}"
+        )
 
 
 @router.post("/matrices/from-csv", response_model=IOMatrixResponse, status_code=status.HTTP_201_CREATED)

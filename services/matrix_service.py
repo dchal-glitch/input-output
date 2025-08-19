@@ -243,16 +243,29 @@ class MatrixService:
                 raise error
         
         return self._economic_multipliers
-    
-    async def calculate_output_with_new_fd(self, new_final_demand: np.ndarray) -> np.ndarray:
+
+    async def calculate_output_with_new_fd(self,use_fd=False,use_total_final_use=False, new_final_demand: np.ndarray=None,new_total_final_use: np.ndarray=None) -> np.ndarray:
         """
         Calculate new output given new final demand using shared Leontief inverse
         Formula: X = (I - A)^(-1) * Y
         """
         try:
+            if use_fd:
+                if new_final_demand is None:
+                    raise ValueError("New final demand data must be provided when use_fd is True")
+            if use_total_final_use:
+                if new_total_final_use is None:
+                    raise ValueError("New total final use data must be provided when use_total_final_use is True")
+            if not use_fd and not use_total_final_use:
+                raise ValueError("Either use_fd or use_total_final_use must be True")
+            mult_data = None
+            if use_fd:
+                mult_data = new_final_demand
+            elif use_total_final_use:
+                mult_data = new_total_final_use
             leontief_inv = await self.get_leontief_inverse()
             # new_output = leontief_inv.values @ new_final_demand
-            new_output = leontief_inv.dot(new_final_demand)
+            new_output = leontief_inv.dot(mult_data)
             logger.info("Output calculated with new final demand")
             return new_output
         except Exception as error:

@@ -7,7 +7,7 @@ class TableService:
     def __init__(self):
         pass
 
-    def flatten_matrix(self, table, sector_mapping, demand_mapping, demand_groups, is_io_table=False, is_editable=False):
+    def flatten_matrix(self,name, table, sector_mapping, demand_mapping, demand_groups, is_io_table=False, is_editable=False):
         """Flatten the IO matrix into a list of dictionaries."""
         sector_keys = list(sector_mapping.keys())
         final_demand_keys = list(demand_mapping.keys())
@@ -48,7 +48,7 @@ class TableService:
             # Add rowname field
             row_data.append({
                 "key": "IO",
-                "value": sector_mapping.get(row_index, demand_mapping.get(row_index, row_index)),
+                "value": row_index,
                 "title": sector_mapping.get(row_index, demand_mapping.get(row_index, row_index))
             })
 
@@ -66,7 +66,7 @@ class TableService:
         output_json = {
             "isEditable": is_editable,
             "header": {
-                "title": "Input Output Table",
+                "title": name,
                 "key": "input_output",
                 "value": "inputOutputData",
                 "groupedHeaders": grouped_headers
