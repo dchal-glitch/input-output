@@ -8,7 +8,8 @@ from schemas.io_schemas import (
     IOMatrixResponse,
     MatrixOperationRequest,
     MatrixOperationResponse,
-    IODataUpdate
+    IODataUpdate,
+    PolicyDashboardRequest
 )
 from services.io_service import IOService
 from services.matrix_service import MatrixService
@@ -17,7 +18,7 @@ from services.table_service import TableService
 
 router = APIRouter(prefix="/io", tags=["input-output"])
 
-@router.get('/table')
+@router.get('/tables')
 async def get_io_table():
     """
     Get the Input-Output table data
@@ -25,17 +26,94 @@ async def get_io_table():
     try:
         io_service = await IOService.create()
         io_table = await io_service.get_io_table()
+        sector_mapping = {
+            "agriculture": "Agriculture",
+            "manufacturing": "Manufacturing",
+            "construction": "Construction",
+            "transport": "Transport",
+            "services": "Services",
+            "energy": "Energy"
+        }
+        demand_mapping = {
+            "final_consumption": "Final Consumption",
+            "capital_formation": "Capital Formation",
+            "exports": "Exports"
+        }
+        final_demand_groups = {
+            "Final Demand": ["final_consumption", "capital_formation"],
+            "Exports": ["exports"]
+        }
+
+        table_service = TableService()
+        flattened_table = table_service.flatten_matrix(io_table,sector_mapping,demand_mapping,final_demand_groups,is_io_table=True)
+        tables = []
+        tables.append(flattened_table)
         return {
-            "io_table": io_table,
-            "message": "IO table retrieved successfully"
+            "data": tables,
+            "success": True
         }
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to get IO table: {str(e)}")
+    
+# @router.get('/policy-dashboard')
+# async def get_io_table():
+#     """
+#     Get the Input-Output table data
+#     """
+#     try:
+#         io_service = await IOService.create()
+#         fd_table = await io_service.get_fd_table(with_total_final_use=True)
 
-@router.get('/calculate-output')
-async def calculate_output():
+#         sector_mapping = {
+#             "agriculture": "Agriculture",
+#             "manufacturing": "Manufacturing",
+#             "construction": "Construction",
+#             "transport": "Transport",
+#             "services": "Services",
+#             "energy": "Energy"
+#         }
+#         demand_mapping = {
+#             "final_consumption": "Final Consumption",
+#             "capital_formation": "Capital Formation",
+#             "exports": "Exports"
+#         }
+#         final_demand_groups = {
+#             "Final Demand": ["final_consumption", "capital_formation"],
+#             "Exports": ["exports"]
+#         }
+
+#         table_service = TableService()
+#         flattened_table = table_service.flatten_io_matrix(fd_table,sector_mapping,demand_mapping,final_demand_groups)
+#         tables = []
+#         tables.append(flattened_table)
+#         return {
+#             "data": tables,
+#             "success": True
+#         }
+
+#     except Exception as e:
+#         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to get IO table: {str(e)}")
+
+@router.post('/policy-dashboard')
+async def policy_dashboard(request_data: PolicyDashboardRequest):
     """
-    Calculate comprehensive output analysis
+    Calculate comprehensive output analysis with sector value changes
+    
+    Request Body Example:
+    {
+        "change_sector_values": [
+            {
+                "sector": "agriculture",
+                "demand": "capital_formation", 
+                "value": 10
+            },
+            {
+                "sector": "manufacturing",
+                "demand": "final_consumption",
+                "value": 25
+            }
+        ]
+    }
     """
     try:
         sector_mapping = {
@@ -69,18 +147,30 @@ async def calculate_output():
         # }
         final_demand_groups = {
             "Final Demand": ["final_consumption", "capital_formation"],
-            "Exports": ["exports"]
+            "Exports": ["exports"],
+            "Total": ["total_final_use"]
         }
 
 
         table_service = TableService()
         io_service = await IOService.create()
-        output_data = await io_service.calculate_output()
-        new_ic_matrix = output_data.get("new_intermediate_consumption", [])
         
-        flattened_table = table_service.flatten_io_matrix(new_ic_matrix,sector_mapping,demand_mapping,final_demand_groups)
+        
+        # Convert Pydantic models to dictionaries for the service
+        change_sector_values = [change.model_dump() for change in request_data.change_sector_values]
         tables = []
-        tables.append(flattened_table)
+        if not change_sector_values:
+            fd_table = await io_service.get_fd_table(with_total_final_use=True)
+            flattened_fd_table = table_service.flatten_matrix(fd_table, sector_mapping, demand_mapping, final_demand_groups, is_editable=True)
+            tables.append(flattened_fd_table)
+        else:
+            output_data = await io_service.calculate_output(change_sector_values)
+            changed_fd_matrix_with_total_final_use = output_data.get("changed_fd_matrix_with_total_final_use", [])
+            new_ic_matrix = output_data.get("new_ic_matrix", [])
+            flattened_fd_table = table_service.flatten_matrix(changed_fd_matrix_with_total_final_use, sector_mapping, demand_mapping, final_demand_groups, is_editable=True)
+            tables.append(flattened_fd_table)
+            flattened_ic_table = table_service.flatten_matrix(new_ic_matrix, sector_mapping, demand_mapping, final_demand_groups, is_io_table=True)
+            tables.append(flattened_ic_table)
         return {
             "data": tables,
             "message": "Output calculations completed successfully",

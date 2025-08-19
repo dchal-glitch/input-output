@@ -25,8 +25,7 @@ class Settings(BaseSettings):
     # CORS
     cors_origins: List[str] = ["*"]
     
-    # Observability
-    jaeger_endpoint: Optional[str] = None
+    # Logging
     log_level: str = "INFO"
     
     # External APIs

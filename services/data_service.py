@@ -159,26 +159,6 @@ class DataService:
         except Exception as e:
             logger.error(f"Failed to fetch final demand data: {str(e)}")
             raise Exception(f"Failed to fetch FD data: {str(e)}")
-        
-    async def get_updated_final_demand_data(self, change_data =[]) -> pd.DataFrame:
-        final_demand_matrix = await self.get_final_demand_data( format='pandas')
-        try:
-            if not change_data:
-                logger.warning("No changes provided for final demand data")
-                return final_demand_matrix
-            logger.info(f"Applying changes to final demand data: {change_data}")
-            for change_conf in change_data:
-                sector = change_conf.get("sector")
-                demand = change_conf.get("demand")
-                value = change_conf.get("value")
-
-                if sector in final_demand_matrix.index and demand in final_demand_matrix.columns:
-                    final_demand_matrix.at[sector, demand] = value
-                    logger.info(f"Updated FD matrix at ({sector}, {demand}) to {value}")
-            return final_demand_matrix
-        except Exception as e:
-            logger.error(f"Failed to update final demand data: {str(e)}")
-            raise Exception(f"Failed to update FD data: {str(e)}")
 
     async def get_sector_labels(self, file_name: str = "sectors.csv") -> List[str]:
         """

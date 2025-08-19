@@ -8,7 +8,6 @@ from core.config import get_settings
 from core.logging import configure_logging, get_logger
 from api.v1 import api_router
 from api.health import router as health_router
-from utils.metrics import PrometheusMiddleware, metrics_endpoint
 from db.database import engine
 from models import models
 
@@ -35,7 +34,11 @@ app = FastAPI(
 # Add middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins,
+    # allow_origins=settings.cors_origins,
+    allow_origins=[
+        "http://localhost:4200",  # React dev server
+        "http://localhost:8000",  # Alternative React port
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -45,8 +48,6 @@ app.add_middleware(
     TrustedHostMiddleware,
     allowed_hosts=["*"]  # Configure this properly for production
 )
-
-app.add_middleware(PrometheusMiddleware)
 
 
 @app.middleware("http")
@@ -77,9 +78,6 @@ async def global_exception_handler(request: Request, exc: Exception):
 # Add routes
 app.include_router(health_router)
 app.include_router(api_router)
-
-# Add metrics endpoint
-app.get("/metrics", include_in_schema=False)(metrics_endpoint)
 
 
 @app.on_event("startup")

@@ -41,17 +41,54 @@ class IOService:
         """Get the IO table data"""
         matrix_service = await self.get_matrix_service()
         return await matrix_service.get_io_matrix()
+    
+    async def get_ic_table(self):
+        """Get the intermediate consumption table data"""
+        matrix_service = await self.get_matrix_service()
+        return await matrix_service.get_intermediate_consumption_matrix()
 
-    async def calculate_output(self):
+    async def get_fd_table(self,with_total_final_use=False,change_data =[]):
+        """Get the final demand table data"""
+        matrix_service = await self.get_matrix_service()
+        fd_matrix = await matrix_service.get_final_demand_matrix()
+        if change_data:
+            logger.info(f"Applying changes to final demand data: {change_data}")
+            for change_conf in change_data:
+                sector = change_conf.get("sector")
+                demand = change_conf.get("demand")
+                value = change_conf.get("value")
+
+                if sector in fd_matrix.index and demand in fd_matrix.columns:
+                    fd_matrix.at[sector, demand] = value
+                    logger.info(f"Updated FD matrix at ({sector}, {demand}) to {value}")
+
+        if with_total_final_use:
+            total_final_use = await self.get_total_final_use(change_data)
+            fd_matrix = pd.concat([fd_matrix, total_final_use], axis=1)
+        return fd_matrix
+
+    async def get_total_final_use(self, change_data=[]):
+        """Get the total final use"""
+        matrix_service = await self.get_matrix_service()
+        io_matrix = await matrix_service.get_io_matrix()
+        if change_data:
+            logger.info(f"Applying changes to IO matrix for total final use: {change_data}")
+            for change_conf in change_data:
+                sector = change_conf.get("sector")
+                demand = change_conf.get("demand")
+                value = change_conf.get("value")
+                if sector in io_matrix.index and demand in io_matrix.columns:
+                    io_matrix.at[sector, demand] = value
+                    logger.info(f"Updated IO matrix at ({sector}, {demand}) to {value}")
+        total_final_use = io_matrix.sum(axis=1).rename("total_final_use")
+
+        return total_final_use
+    
+    async def calculate_output(self,change_sector_values):
         """Calculate output using technical coefficients and Leontief inverse"""
         try:
-            change_sector_values = [
-                {
-                    "sector": "Agriculture",
-                    "demand": "Capital Formation",
-                    "value": 10
-                }
-            ]
+            if not change_sector_values:
+                raise ValueError("No sector changes provided for output calculation")
             matrix_service = await self.get_matrix_service()
             
             # Get technical coefficients matrix
@@ -65,9 +102,9 @@ class IOService:
             
             # Calculate output using technical coefficients and Leontief inverse
             
-            changed_final_demand_matrix = await self.__data_service.get_updated_final_demand_data(change_data=change_sector_values)
-
-            output = await matrix_service.calculate_output_with_new_fd( changed_final_demand_matrix)
+            changed_fd_matrix = await self.get_fd_table(change_data=change_sector_values)
+            changed_fd_matrix_with_total_final_use = await self.get_fd_table(change_data=change_sector_values, with_total_final_use=True)
+            output = await matrix_service.calculate_output_with_new_fd( changed_fd_matrix)
 
             new_ic_matrix = tech_coeffs.multiply(output.sum(axis=1), axis=0)
             # Return comprehensive output calculation results
@@ -76,9 +113,10 @@ class IOService:
                 "leontief_inverse": leontief_inverse,
                 "multipliers": multipliers,
                 "io_matrix": await matrix_service.get_io_matrix(),
-                "new_intermediate_consumption": new_ic_matrix,
-                # "output": output.tolist(),
-                # "sectors": matrix_service.sectors
+                "new_ic_matrix": new_ic_matrix,
+                "changed_fd_matrix_with_total_final_use": changed_fd_matrix_with_total_final_use,
+                "new_output": output,
+                "changed_fd_in_perc": ((output - changed_fd_matrix).div(changed_fd_matrix))*100
             }
             
         except Exception as error:

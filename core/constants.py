@@ -1,0 +1,1 @@
+TOTAL_FINAL_USE_COLUMN = "total_final_use"

@@ -14,10 +14,3 @@ def test_root_endpoint(client):
     assert response.status_code == 200
     data = response.json()
     assert "message" in data
-
-
-def test_metrics_endpoint(client):
-    """Test metrics endpoint"""
-    response = client.get("/metrics")
-    assert response.status_code == 200
-    assert "http_requests_total" in response.text

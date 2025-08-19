@@ -54,3 +54,14 @@ class IODataUpdate(BaseModel):
     intermediate_consumption_data: Optional[List[List[float]]] = None
     final_demand_data: Optional[List[List[float]]] = None
     sectors: Optional[List[str]] = None
+
+
+# Policy Dashboard Schemas
+class SectorChange(BaseModel):
+    sector: str  # agriculture, manufacturing, construction, transport, services, energy
+    demand: str  # final_consumption, capital_formation, exports
+    value: float
+
+
+class PolicyDashboardRequest(BaseModel):
+    change_sector_values: List[SectorChange]
